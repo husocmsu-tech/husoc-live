@@ -1,0 +1,72 @@
+    // ===== HUSOC Live Chat (แชทคอมเมนต์สด) — วางไว้ใน match /databases/{database}/documents { ... } =====
+    match /liverooms/{code} {
+      function signedIn() { return request.auth != null; }
+      function myEmail() { return request.auth.token.email.lower(); }
+      function isMsu() {
+        return signedIn() && request.auth.token.email is string
+          && myEmail().matches('.*@msu[.]ac[.]th') && request.auth.token.email_verified == true;
+      }
+      function roomData() { return get(/databases/$(database)/documents/liverooms/$(code)).data; }
+      function isRoomAdmin() { return isMsu() && (roomData().owner == request.auth.uid || myEmail() in roomData().admins); }
+      function roomOpen() { return roomData().open == true; }
+      function okName(d) { return d.name is string && d.name.size() > 0 && d.name.size() <= 20; }
+
+      allow read: if true;
+      allow create: if isMsu() && request.resource.data.owner == request.auth.uid && request.resource.data.admins is list;
+      allow update: if isMsu()
+        && (resource.data.owner == request.auth.uid || myEmail() in resource.data.admins)
+        && request.resource.data.owner == resource.data.owner
+        && (resource.data.owner == request.auth.uid || request.resource.data.admins == resource.data.admins);
+      allow delete: if isMsu() && resource.data.owner == request.auth.uid;
+
+      match /comments/{id} {
+        allow read: if true;
+        allow create: if signedIn() && roomOpen()
+          && request.resource.data.keys().hasOnly(['name','text','flagged','uid','deleted','ts'])
+          && request.resource.data.uid == request.auth.uid && okName(request.resource.data)
+          && request.resource.data.text is string && request.resource.data.text.size() > 0 && request.resource.data.text.size() <= 150
+          && request.resource.data.deleted == false && request.resource.data.ts == request.time;
+        allow update, delete: if isRoomAdmin();
+      }
+      match /questions/{id} {
+        allow read: if true;
+        allow create: if signedIn() && roomOpen()
+          && request.resource.data.keys().hasOnly(['name','text','flagged','uid','likes','answered','deleted','ts'])
+          && request.resource.data.uid == request.auth.uid && okName(request.resource.data)
+          && request.resource.data.text is string && request.resource.data.text.size() > 0 && request.resource.data.text.size() <= 200
+          && request.resource.data.likes == [] && request.resource.data.answered == false
+          && request.resource.data.deleted == false && request.resource.data.ts == request.time;
+        allow update: if isRoomAdmin()
+          || (signedIn() && request.resource.data.diff(resource.data).affectedKeys().hasOnly(['likes'])
+              && request.resource.data.likes is list
+              && request.resource.data.likes.toSet().difference(resource.data.likes.toSet())
+                   .union(resource.data.likes.toSet().difference(request.resource.data.likes.toSet()))
+                 == [request.auth.uid].toSet());
+        allow delete: if isRoomAdmin();
+      }
+      match /wc/{uid} {
+        allow read: if true;
+        allow create, update: if signedIn() && request.auth.uid == uid && roomOpen()
+          && request.resource.data.keys().hasOnly(['name','words','round','uid','ts'])
+          && request.resource.data.uid == uid && okName(request.resource.data)
+          && request.resource.data.words is list && request.resource.data.words.size() >= 1 && request.resource.data.words.size() <= 3;
+        allow delete: if isRoomAdmin();
+      }
+      match /emojis/{id} {
+        allow read: if true;
+        allow create: if signedIn() && roomOpen()
+          && request.resource.data.keys().hasOnly(['e','n','uid','ts'])
+          && request.resource.data.uid == request.auth.uid
+          && request.resource.data.e is string && request.resource.data.e.size() <= 8
+          && request.resource.data.n is int && request.resource.data.n >= 1 && request.resource.data.n <= 10
+          && request.resource.data.ts == request.time;
+        allow delete: if isRoomAdmin();
+      }
+      match /people/{uid} {
+        allow read: if true;
+        allow create, update: if signedIn() && request.auth.uid == uid
+          && request.resource.data.keys().hasOnly(['name','ts']) && okName(request.resource.data);
+        allow delete: if isRoomAdmin();
+      }
+    }
+    // ===== จบส่วน HUSOC Live Chat =====
